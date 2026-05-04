@@ -1,6 +1,7 @@
 <div align="center">
 
 https://github.com/user-attachments/assets/39c3903b-a096-422c-8e5e-09e8eda25d14
+
 (sound on)
 
 Read your entire project spec in 30 seconds. Verify it in one command.
