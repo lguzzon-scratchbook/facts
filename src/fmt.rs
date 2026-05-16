@@ -17,6 +17,12 @@ pub fn run() -> Result<()> {
     }
 
     // Validate all files first — abort on any lint errors.
+    // Cache file contents so we don't re-read for parsing below.
+    struct LoadedFile {
+        content: String,
+        filename: String,
+    }
+    let mut loaded_files: Vec<LoadedFile> = Vec::new();
     let mut has_errors = false;
     for path in &files {
         let content = std::fs::read_to_string(path)
@@ -37,23 +43,22 @@ pub fn run() -> Result<()> {
                 has_errors = true;
             }
         }
+        loaded_files.push(LoadedFile {
+            content,
+            filename: filename.to_string(),
+        });
     }
     if has_errors {
         anyhow::bail!("fmt aborted — fix lint errors first");
     }
 
     // Parse and write back each file.
-    for path in &files {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(".facts");
-        let sheet = parser::parse(&content, filename)
+    for (i, loaded) in loaded_files.iter().enumerate() {
+        let path = &files[i];
+        let sheet = parser::parse(&loaded.content, &loaded.filename)
             .with_context(|| format!("failed to parse {}", path.display()))?;
         let output = writer::write(&sheet);
-        if output != content {
+        if output != loaded.content {
             std::fs::write(path, &output)
                 .with_context(|| format!("failed to write {}", path.display()))?;
         }

@@ -157,25 +157,28 @@ fn run_in(opts: &AddOptions, root: &Path) -> Result<String> {
 
     fact.raw = writer::fact_to_raw(&fact);
 
-    let added_label = fact.label.clone();
-
     if let Some(ref section_path) = opts.section {
         add_to_section(&mut sheet, section_path, fact)?;
     } else {
         sheet.preamble.push(fact);
     }
 
+    // Track the index of the new fact within the target sheet
+    // (it was just appended, so its index = the previous total count).
+    let new_fact_index_in_sheet = sheet.all_facts().len() - 1;
+
     let output = writer::write(&sheet);
     std::fs::write(&file_path, &output)
         .with_context(|| format!("failed to write {}", file_path.display()))?;
 
-    // Re-read all fact sheets and assign IDs to find the new fact's ID.
-    let all_files = project::discover_fact_files(root)?;
+    // Re-read other fact sheets and assign IDs to find the new fact's ID.
+    // The target sheet is already in memory — no need to re-read it.
     let mut all_fact_labels: Vec<(String, Option<String>)> = Vec::new();
-    let mut target_idx = None;
 
+    // Collect labels from non-target files.
+    let all_files = project::discover_fact_files(root)?;
     for path in &all_files {
-        if !path.exists() {
+        if !path.exists() || path.file_name().and_then(|n| n.to_str()) == Some(filename.as_str()) {
             continue;
         }
         let content = std::fs::read_to_string(path)
@@ -187,41 +190,22 @@ fn run_in(opts: &AddOptions, root: &Path) -> Result<String> {
         let file_sheet = parser::parse(&content, fname)
             .with_context(|| format!("failed to parse {}", path.display()))?;
 
-        let is_target_file = path.file_name().and_then(|n| n.to_str()) == Some(filename.as_str());
-
-        for (section_path, f) in file_sheet.all_facts() {
-            let idx = all_fact_labels.len();
+        for (_section_path, f) in file_sheet.all_facts() {
             all_fact_labels.push((f.label.clone(), f.explicit_id.clone()));
-
-            // Match by label, file, and section path.
-            if is_target_file && f.label == added_label {
-                let fact_section = opts
-                    .section
-                    .as_ref()
-                    .map(|s| {
-                        s.split('/')
-                            .map(|p| p.trim().to_string())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let matches_section = section_path
-                    .iter()
-                    .map(|s| s.to_lowercase())
-                    .collect::<Vec<_>>()
-                    == fact_section
-                        .iter()
-                        .map(|s| s.to_lowercase())
-                        .collect::<Vec<_>>();
-                if matches_section {
-                    target_idx = Some(idx);
-                }
-            }
         }
     }
 
+    // Compute the new fact's global index across all files.
+    let non_target_fact_count = all_fact_labels.len();
+    let global_idx = non_target_fact_count + new_fact_index_in_sheet;
+
+    // Now add target sheet labels.
+    for (_section_path, f) in sheet.all_facts() {
+        all_fact_labels.push((f.label.clone(), f.explicit_id.clone()));
+    }
+
     let assigned_ids = id::assign_ids(&all_fact_labels);
-    let idx = target_idx.ok_or_else(|| anyhow::anyhow!("failed to find newly added fact"))?;
-    Ok(assigned_ids[idx].clone())
+    Ok(assigned_ids[global_idx].clone())
 }
 
 /// Add a fact to a section, creating the section path if needed.

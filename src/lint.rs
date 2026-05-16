@@ -145,12 +145,18 @@ pub fn lint_content(content: &str, filename: &str) -> Vec<LintDiagnostic> {
     // Structural checks run on raw content so they catch issues even
     // if the parser would bail on the same content.
     check_line_structure(content, filename, &mut diagnostics);
-    check_invalid_keys(content, filename, &mut diagnostics);
-    check_mixed_tags(content, filename, &mut diagnostics);
-    check_bare_tags(content, filename, &mut diagnostics);
-    check_unknown_continuation_lines(content, filename, &mut diagnostics);
-    check_duplicate_mapping_keys(content, filename, &mut diagnostics);
-    check_empty_mapping_values(content, filename, &mut diagnostics);
+
+    // All fact-group checks share a single grouping pass.
+    let lines: Vec<&str> = content.lines().collect();
+    let fact_groups = group_fact_lines(&lines);
+    check_invalid_keys_from_groups(&fact_groups, filename, &mut diagnostics);
+    check_mixed_tags_from_groups(&fact_groups, filename, &mut diagnostics);
+    check_bare_tags_from_groups(&fact_groups, filename, &mut diagnostics);
+    check_unknown_continuation_lines_from_groups(&fact_groups, filename, &mut diagnostics);
+    check_duplicate_mapping_keys_from_groups(&fact_groups, filename, &mut diagnostics);
+    check_empty_mapping_values_from_groups(&fact_groups, filename, &mut diagnostics);
+
+    // Double-@ tag check operates on individual lines.
     check_double_at_tags(content, filename, &mut diagnostics);
 
     // Also try parsing; if the parser catches something our line-level
@@ -192,10 +198,11 @@ fn check_crlf(content: &str, filename: &str, diagnostics: &mut Vec<LintDiagnosti
 }
 
 /// Check for mixed inline and mapping tags on the same fact.
-fn check_mixed_tags(content: &str, filename: &str, diagnostics: &mut Vec<LintDiagnostic>) {
-    let lines: Vec<&str> = content.lines().collect();
-    let fact_groups = group_fact_lines(&lines);
-
+fn check_mixed_tags_from_groups(
+    fact_groups: &[FactLineGroup<'_>],
+    filename: &str,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
     for group in fact_groups {
         if group.lines.len() < 2 {
             continue;
@@ -242,10 +249,11 @@ fn check_mixed_tags(content: &str, filename: &str, diagnostics: &mut Vec<LintDia
 ///
 /// Bare comma-separated values like `tags: mvp, core` are silently ignored
 /// by the parser. Warn users to use bracket syntax: `tags: [mvp, core]`.
-fn check_bare_tags(content: &str, filename: &str, diagnostics: &mut Vec<LintDiagnostic>) {
-    let lines: Vec<&str> = content.lines().collect();
-    let fact_groups = group_fact_lines(&lines);
-
+fn check_bare_tags_from_groups(
+    fact_groups: &[FactLineGroup<'_>],
+    filename: &str,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
     for group in fact_groups {
         for (offset, line) in group.lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -359,9 +367,11 @@ fn check_cross_file_duplicate_ids(
 }
 
 /// Check for invalid mapping keys.
-fn check_invalid_keys(content: &str, filename: &str, diagnostics: &mut Vec<LintDiagnostic>) {
-    let lines: Vec<&str> = content.lines().collect();
-    let fact_groups = group_fact_lines(&lines);
+fn check_invalid_keys_from_groups(
+    fact_groups: &[FactLineGroup<'_>],
+    filename: &str,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
     let known_keys = ["label", "command", "id", "tags"];
 
     for group in fact_groups {
@@ -454,13 +464,11 @@ fn check_line_structure(content: &str, filename: &str, diagnostics: &mut Vec<Lin
 /// one of the known keys (`label:`, `command:`, `id:`, `tags:`). A line
 /// that doesn't match is silently dropped by the parser. Warn so the user
 /// can fix the file.
-fn check_unknown_continuation_lines(
-    content: &str,
+fn check_unknown_continuation_lines_from_groups(
+    fact_groups: &[FactLineGroup<'_>],
     filename: &str,
     diagnostics: &mut Vec<LintDiagnostic>,
 ) {
-    let lines: Vec<&str> = content.lines().collect();
-    let fact_groups = group_fact_lines(&lines);
     let known_prefixes = ["label:", "command:", "id:", "tags:"];
 
     for group in fact_groups {
@@ -505,13 +513,11 @@ fn check_unknown_continuation_lines(
 ///
 /// When a key like `label:` appears more than once in the same mapping fact,
 /// the parser silently keeps the last value. Warn so the user can fix it.
-fn check_duplicate_mapping_keys(
-    content: &str,
+fn check_duplicate_mapping_keys_from_groups(
+    fact_groups: &[FactLineGroup<'_>],
     filename: &str,
     diagnostics: &mut Vec<LintDiagnostic>,
 ) {
-    let lines: Vec<&str> = content.lines().collect();
-    let fact_groups = group_fact_lines(&lines);
     let known_prefixes = ["label:", "command:", "id:", "tags:"];
 
     for group in fact_groups {
@@ -567,13 +573,11 @@ fn check_duplicate_mapping_keys(
 /// whitespace but no actual value) are silently ignored by the parser because
 /// it looks for `strip_prefix("command: ")` which requires a space and a value.
 /// Warn so the user can either provide a value or remove the key.
-fn check_empty_mapping_values(
-    content: &str,
+fn check_empty_mapping_values_from_groups(
+    fact_groups: &[FactLineGroup<'_>],
     filename: &str,
     diagnostics: &mut Vec<LintDiagnostic>,
 ) {
-    let lines: Vec<&str> = content.lines().collect();
-    let fact_groups = group_fact_lines(&lines);
     let known_keys = ["label", "command", "id", "tags"];
 
     for group in fact_groups {
