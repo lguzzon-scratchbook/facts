@@ -6,3 +6,7 @@
 
 # AgentOps session artifacts
 /.agents/
+.env
+
+# LLVM coverage profile dumps (cargo-llvm-cov)
+*.profraw
