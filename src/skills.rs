@@ -105,3 +105,60 @@ fn extract_description(content: &str) -> String {
         full
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_description_simple() {
+        let content = "---\nname: test\ndescription: A short description\n---\nrest";
+        let desc = extract_description(content);
+        assert_eq!(desc, "A short description");
+    }
+
+    #[test]
+    fn test_extract_description_multiline() {
+        let content = "---\nname: test\ndescription: |\n  A longer description\n  spanning multiple lines\n---\nrest";
+        let desc = extract_description(content);
+        assert!(desc.contains("A longer description"));
+        assert!(desc.contains("spanning multiple lines"));
+    }
+
+    #[test]
+    fn test_extract_description_long() {
+        let content = "---\nname: test\ndescription: This is a very long description that exceeds seventy two characters and should be truncated with an ellipsis at the end\n---\nrest";
+        let desc = extract_description(content);
+        assert!(desc.len() <= 75); // 72 chars + ellipsis character
+        assert!(desc.contains("…"));
+    }
+
+    #[test]
+    fn test_extract_description_no_frontmatter() {
+        let content = "No frontmatter here\nJust plain text";
+        let desc = extract_description(content);
+        assert_eq!(desc, "");
+    }
+
+    #[test]
+    fn test_extract_description_empty() {
+        let content = "---\nname: test\n---\nrest";
+        let desc = extract_description(content);
+        assert_eq!(desc, "");
+    }
+
+    #[test]
+    fn test_extract_description_empty_value() {
+        let content = "---\nname: test\ndescription:\n---\nrest";
+        let desc = extract_description(content);
+        assert_eq!(desc, "");
+    }
+
+    #[test]
+    fn test_extract_description_yaml_block() {
+        let content = "---\nname: test\ndescription: >\n  This uses yaml block\n---\nrest";
+        let desc = extract_description(content);
+        // Block indicator should be skipped
+        assert!(!desc.contains(">"));
+    }
+}

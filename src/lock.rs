@@ -146,4 +146,32 @@ mod tests {
         let lock = FileLock::acquire(dir.path());
         assert!(lock.is_ok(), "should be able to reacquire after drop");
     }
+
+    #[test]
+    fn test_is_stale_false_for_new_file() {
+        let dir = TempDir::new().unwrap();
+        let lock_path = dir.path().join(".facts.lock");
+        File::create(&lock_path).unwrap();
+        assert!(
+            !is_stale(&lock_path),
+            "freshly created file should not be stale"
+        );
+    }
+
+    #[test]
+    fn test_is_stale_false_for_nonexistent() {
+        let dir = TempDir::new().unwrap();
+        let lock_path = dir.path().join(".facts.lock");
+        assert!(
+            !is_stale(&lock_path),
+            "nonexistent file should not be considered stale"
+        );
+    }
+
+    #[test]
+    fn test_lock_constants() {
+        assert!(STALE_LOCK_SECS > 0);
+        assert!(RETRY_INTERVAL.as_millis() > 0);
+        assert!(MAX_WAIT.as_secs() > 0);
+    }
 }
