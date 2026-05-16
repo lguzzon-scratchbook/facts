@@ -183,9 +183,8 @@ mod tests {
         let target_id = find_id_for_label(content, "only fact");
         run_in(&target_id, dir.path()).unwrap();
 
-        let result = fs::read_to_string(&facts_path).unwrap();
-        assert!(!result.contains("mysection"));
-        assert!(!result.contains("only fact"));
+        // file is deleted when last fact is removed
+        assert!(!facts_path.exists());
     }
 
     #[test]
@@ -223,9 +222,8 @@ mod tests {
         let target_id = find_id_for_label(content, "only child fact");
         run_in(&target_id, dir.path()).unwrap();
 
-        let result = fs::read_to_string(&facts_path).unwrap();
-        assert!(!result.contains("parent"));
-        assert!(!result.contains("child"));
+        // file is deleted when last fact is removed
+        assert!(!facts_path.exists());
     }
 
     #[test]

@@ -456,8 +456,8 @@ mod tests {
         };
         run_in(&opts, dir.path()).unwrap();
 
-        let source = fs::read_to_string(&facts_path).unwrap();
-        assert!(!source.contains("fact to move"));
+        // source file is deleted when last fact is moved out
+        assert!(!facts_path.exists());
 
         let target = fs::read_to_string(dir.path().join("api.facts")).unwrap();
         assert!(target.contains("# api"));
