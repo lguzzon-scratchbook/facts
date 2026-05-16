@@ -2,6 +2,29 @@
 ///
 /// Supports: tag names, `and`, `or`, `not`, and parentheses.
 /// Example: "mvp and not blocked"
+
+#[derive(Debug, Clone)]
+enum Expr {
+    Tag(String),
+    Not(Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
+}
+
+/// Compiled tag expression — parse once, evaluate many times.
+#[derive(Debug, Clone)]
+pub struct TagExpr(Expr);
+
+/// Compile a tag expression string for repeated evaluation.
+pub fn compile_tag_expr(expr: &str) -> Result<TagExpr, String> {
+    parse_expr(expr).map(TagExpr)
+}
+
+/// Evaluate a compiled tag expression against a set of tags.
+pub fn eval_tag_expr(compiled: &TagExpr, tags: &[String]) -> bool {
+    eval(&compiled.0, tags)
+}
+
 /// Validate a tag expression, returning an error if it is malformed.
 /// Call this once before the main loop to fail early on bad expressions.
 pub fn validate_tag_expr(expr: &str) -> Result<(), String> {
@@ -14,6 +37,20 @@ pub fn matches_tag_expr(expr: &str, tags: &[String]) -> bool {
         Ok(ast) => eval(&ast, tags),
         Err(_) => false,
     }
+}
+
+/// Compiled search expression — parse once, evaluate many times.
+#[derive(Debug, Clone)]
+pub struct SearchExpr(Expr);
+
+/// Compile a search expression string for repeated evaluation.
+pub fn compile_search_expr(expr: &str) -> Result<SearchExpr, String> {
+    parse_expr(expr).map(SearchExpr)
+}
+
+/// Evaluate a compiled search expression against a pre-lowercased haystack.
+pub fn eval_search_expr(compiled: &SearchExpr, haystack: &str) -> bool {
+    eval_search(&compiled.0, haystack)
 }
 
 /// Check if a haystack string matches a boolean search expression.
@@ -35,14 +72,6 @@ fn eval_search(expr: &Expr, haystack: &str) -> bool {
         Expr::And(a, b) => eval_search(a, haystack) && eval_search(b, haystack),
         Expr::Or(a, b) => eval_search(a, haystack) || eval_search(b, haystack),
     }
-}
-
-#[derive(Debug)]
-enum Expr {
-    Tag(String),
-    Not(Box<Expr>),
-    And(Box<Expr>, Box<Expr>),
-    Or(Box<Expr>, Box<Expr>),
 }
 
 fn eval(expr: &Expr, tags: &[String]) -> bool {

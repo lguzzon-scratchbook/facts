@@ -12,7 +12,9 @@ use crate::lint;
 use crate::model::FactSheet;
 use crate::parser;
 use crate::project;
-use crate::tags::{matches_search_expr, matches_tag_expr, validate_tag_expr};
+use crate::tags::{
+    compile_search_expr, compile_tag_expr, eval_search_expr, eval_tag_expr, validate_tag_expr,
+};
 
 /// Options for the check command.
 pub struct CheckOptions {
@@ -45,22 +47,15 @@ enum CheckStatus {
 /// Format the display path for a fact (file > section > label).
 fn format_display_path(sheet: &FactSheet, section_path: &[String], label: &str) -> String {
     let file_prefix = sheet.display_name();
-    let mut path_parts: Vec<&str> = Vec::new();
-    if !file_prefix.is_empty() {
-        path_parts.push(file_prefix);
-    }
-    for s in section_path {
-        path_parts.push(s.as_str());
-    }
-
     let dim_sep = color::dim(">");
 
-    if path_parts.is_empty() {
+    if file_prefix.is_empty() && section_path.is_empty() {
         label.to_string()
     } else {
-        let colored_path = path_parts
-            .iter()
-            .map(|p| color::bold(p))
+        let colored_path = std::iter::once(file_prefix)
+            .filter(|s| !s.is_empty())
+            .chain(section_path.iter().map(|s| s.as_str()))
+            .map(color::bold)
             .collect::<Vec<_>>()
             .join(&format!(" {dim_sep} "));
         format!("{colored_path} {dim_sep} {label}")
@@ -229,6 +224,13 @@ pub fn run(opts: &CheckOptions) -> Result<bool> {
     }
 
     // Lint all files first — fail early on structural errors.
+    // Cache file contents so we don't re-read for parsing below.
+    struct LoadedFile {
+        path: std::path::PathBuf,
+        content: String,
+        filename: String,
+    }
+    let mut loaded_files: Vec<LoadedFile> = Vec::new();
     let mut lint_errors = false;
     for path in &files {
         let content = std::fs::read_to_string(path)
@@ -254,6 +256,11 @@ pub fn run(opts: &CheckOptions) -> Result<bool> {
                 lint_errors = true;
             }
         }
+        loaded_files.push(LoadedFile {
+            path: path.clone(),
+            content,
+            filename: filename.to_string(),
+        });
     }
     if lint_errors {
         eprintln!("\n{}", color::red("check aborted — fix lint errors first"));
@@ -261,15 +268,9 @@ pub fn run(opts: &CheckOptions) -> Result<bool> {
     }
 
     let mut sheets = Vec::new();
-    for path in &files {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(".facts");
-        let sheet = parser::parse(&content, filename)
-            .with_context(|| format!("failed to parse {}", path.display()))?;
+    for loaded in &loaded_files {
+        let sheet = parser::parse(&loaded.content, &loaded.filename)
+            .with_context(|| format!("failed to parse {}", loaded.path.display()))?;
         sheets.push(sheet);
     }
 
@@ -285,6 +286,20 @@ pub fn run(opts: &CheckOptions) -> Result<bool> {
     let mut results: Vec<CheckResult> = Vec::new();
     let mut fact_idx = 0;
 
+    // Compile tag/search expressions once for reuse.
+    let compiled_tags = opts
+        .tags_expr
+        .as_ref()
+        .map(|e| compile_tag_expr(e))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid tag expression: {e}"))?;
+    let compiled_search = opts
+        .search_expr
+        .as_ref()
+        .map(|e| compile_search_expr(e))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid search expression: {e}"))?;
+
     // Pre-compute ID width for consistent alignment.
     let id_width = assigned_ids.iter().map(|id| id.len()).max().unwrap_or(3);
     let detail_indent = id_width + 6;
@@ -297,8 +312,8 @@ pub fn run(opts: &CheckOptions) -> Result<bool> {
             let id = assigned_ids[fact_idx].clone();
             fact_idx += 1;
 
-            if let Some(ref expr) = opts.tags_expr
-                && !matches_tag_expr(expr, &fact.tags)
+            if let Some(ref compiled) = compiled_tags
+                && !eval_tag_expr(compiled, &fact.tags)
             {
                 continue;
             }
@@ -309,9 +324,10 @@ pub fn run(opts: &CheckOptions) -> Result<bool> {
                 continue;
             }
 
-            if let Some(ref expr) = opts.search_expr {
-                let haystack = build_search_haystack(&section_path, &fact.label, &fact.tags);
-                if !matches_search_expr(expr, &haystack) {
+            if let Some(ref compiled) = compiled_search {
+                let haystack = build_search_haystack(&section_path, &fact.label, &fact.tags)
+                    .to_ascii_lowercase();
+                if !eval_search_expr(compiled, &haystack) {
                     continue;
                 }
             }

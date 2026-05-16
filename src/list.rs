@@ -6,7 +6,9 @@ use crate::id;
 use crate::model::FactSheet;
 use crate::parser;
 use crate::project;
-use crate::tags::{matches_search_expr, matches_tag_expr, validate_tag_expr};
+use crate::tags::{
+    compile_search_expr, compile_tag_expr, eval_search_expr, eval_tag_expr, validate_tag_expr,
+};
 
 /// Options for the list command.
 pub struct ListOptions {
@@ -62,6 +64,20 @@ pub fn run(opts: &ListOptions) -> Result<()> {
 
     let assigned_ids = id::assign_ids(&all_fact_labels);
 
+    // Compile expressions once for reuse.
+    let compiled_tags = opts
+        .tags_expr
+        .as_ref()
+        .map(|e| compile_tag_expr(e))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid tag expression: {e}"))?;
+    let compiled_search = opts
+        .search_expr
+        .as_ref()
+        .map(|e| compile_search_expr(e))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid search expression: {e}"))?;
+
     let id_width = assigned_ids.iter().map(|id| id.len()).max().unwrap_or(3);
 
     let mut fact_idx = 0;
@@ -101,8 +117,8 @@ pub fn run(opts: &ListOptions) -> Result<()> {
                 continue;
             }
 
-            if let Some(ref expr) = opts.tags_expr
-                && !matches_tag_expr(expr, &fact.tags)
+            if let Some(ref compiled) = compiled_tags
+                && !eval_tag_expr(compiled, &fact.tags)
             {
                 continue;
             }
@@ -113,9 +129,9 @@ pub fn run(opts: &ListOptions) -> Result<()> {
                 continue;
             }
 
-            if let Some(ref expr) = opts.search_expr {
+            if let Some(ref compiled) = compiled_search {
                 let haystack = build_search_haystack(&path, &fact.label, &fact.tags);
-                if !matches_search_expr(expr, &haystack) {
+                if !eval_search_expr(compiled, &haystack.to_ascii_lowercase()) {
                     continue;
                 }
             }
@@ -279,6 +295,7 @@ fn build_search_haystack(section_path: &[String], label: &str, tags: &[String]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tags::matches_search_expr;
 
     #[test]
     fn test_section_matches_exact() {
@@ -330,5 +347,48 @@ mod tests {
         assert!(!section_matches("facts/cli/init", "check"));
         assert!(!section_matches("facts/cli/init", "api"));
         assert!(!section_matches("cli", "cli/check"));
+    }
+
+    #[test]
+    fn test_search_expr_in_label() {
+        assert!(matches_search_expr("cli", "CLI interface"));
+        assert!(matches_search_expr("update", "auto update logic"));
+    }
+
+    #[test]
+    fn test_search_expr_case_insensitive() {
+        assert!(matches_search_expr("CLI", "cli interface"));
+        assert!(matches_search_expr("cli", "CLI interface"));
+    }
+
+    #[test]
+    fn test_search_expr_in_tags() {
+        assert!(matches_search_expr("mvp", "@mvp @core"));
+        assert!(matches_search_expr("core", "@mvp @core"));
+    }
+
+    #[test]
+    fn test_search_expr_boolean_and() {
+        assert!(matches_search_expr("cli and mvp", "CLI interface @mvp"));
+        assert!(!matches_search_expr("cli and api", "CLI interface"));
+    }
+
+    #[test]
+    fn test_search_expr_boolean_or() {
+        assert!(matches_search_expr("cli or api", "CLI interface"));
+        assert!(matches_search_expr("cli or api", "API endpoint"));
+        assert!(!matches_search_expr("cli or api", "testing only"));
+    }
+
+    #[test]
+    fn test_search_expr_boolean_not() {
+        assert!(matches_search_expr("cli and not api", "CLI interface"));
+        assert!(!matches_search_expr("cli and not api", "CLI API wrapper"));
+    }
+
+    #[test]
+    fn test_search_expr_invalid_returns_false() {
+        assert!(!matches_search_expr("and", "anything"));
+        assert!(!matches_search_expr("or", "anything"));
     }
 }
