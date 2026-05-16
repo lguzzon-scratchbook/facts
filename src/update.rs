@@ -24,11 +24,11 @@ pub fn run() -> Result<()> {
         InstallMethod::Direct => update_direct(&exe)?,
     }
 
-    if let Ok(root) = project::find_project_root() {
-        if root.join(".facts").is_file() {
-            println!();
-            init::run()?;
-        }
+    if let Ok(root) = project::find_project_root()
+        && root.join(".facts").is_file()
+    {
+        println!();
+        init::run()?;
     }
 
     Ok(())

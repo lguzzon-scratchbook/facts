@@ -3,3 +3,6 @@
 
 # personal Claude Code sandbox overrides (created by user, non-portable)
 .claude/settings.local.json
+
+# AgentOps session artifacts
+/.agents/

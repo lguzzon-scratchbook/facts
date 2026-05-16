@@ -87,10 +87,10 @@ pub fn run(opts: &ListOptions) -> Result<()> {
             // Apply section filter — case-insensitive path match (consistent
             // with `add --section` which uses eq_ignore_ascii_case).
             // --section "cli" matches "cli", "Cli", "cli/check", etc. but NOT "cli_tools".
-            if let Some(ref section) = opts.section_filter {
-                if !section_matches(&path.join("/"), section) {
-                    continue;
-                }
+            if let Some(ref section) = opts.section_filter
+                && !section_matches(&path.join("/"), section)
+            {
+                continue;
             }
 
             if opts.has_command && fact.command.is_none() {
@@ -107,10 +107,10 @@ pub fn run(opts: &ListOptions) -> Result<()> {
                 continue;
             }
 
-            if let Some(depth) = opts.depth {
-                if path.len() > depth {
-                    continue;
-                }
+            if let Some(depth) = opts.depth
+                && path.len() > depth
+            {
+                continue;
             }
 
             if let Some(ref expr) = opts.search_expr {
