@@ -1,8 +1,12 @@
 <div align="center">
 
-https://github.com/user-attachments/assets/39c3903b-a096-422c-8e5e-09e8eda25d14
+<img src="assets/readme/hero.png" alt="facts" width="800" />
 
-(sound on)
+
+
+https://github.com/user-attachments/assets/80981efb-8bab-47ee-a567-3eb6071321ad
+
+
 
 Read your entire project spec in 30 seconds. Verify it in one command.
 
@@ -53,7 +57,7 @@ curl -fsSL https://av.codes/facts.sh | sh
 
 ```sh
 npm install -g @avcodes/facts        # or npm
-pip install facts-cli                 # or pip
+pipx install facts-cli               # or pipx
 ```
 
 It's a single Rust binary with two dependencies, running on Linux, macOS, and Windows.

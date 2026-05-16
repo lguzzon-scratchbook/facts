@@ -1,4 +1,5 @@
 /// The `check` subcommand — run command-facts and report pass/fail/manual.
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -11,11 +12,13 @@ use crate::lint;
 use crate::model::FactSheet;
 use crate::parser;
 use crate::project;
-use crate::tags::{matches_tag_expr, validate_tag_expr};
+use crate::tags::{matches_search_expr, matches_tag_expr, validate_tag_expr};
 
 /// Options for the check command.
 pub struct CheckOptions {
     pub tags_expr: Option<String>,
+    pub search_expr: Option<String>,
+    pub depth: Option<usize>,
     pub timeout: Option<u64>,
 }
 
@@ -159,12 +162,62 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> (i32, String) {
     }
 }
 
+fn print_result(out: &mut impl Write, r: &CheckResult, id_width: usize, detail_indent: usize) {
+    let padded_id = format!("{:width$}", r.id, width = id_width);
+    let tag_suffix = format_tag_suffix(&r.tags);
+
+    match &r.status {
+        CheckStatus::Passed { command } => {
+            let _ = writeln!(
+                out,
+                "  {} {} {}{}",
+                color::green(&format!("✓ {padded_id}")),
+                r.display_path,
+                color::dim(&format!("({command})")),
+                tag_suffix,
+            );
+        }
+        CheckStatus::Failed {
+            command,
+            exit_code,
+            stderr,
+        } => {
+            let _ = writeln!(
+                out,
+                "  {} {}{}",
+                color::red(&format!("✗ {padded_id}")),
+                r.display_path,
+                tag_suffix,
+            );
+            let pad = " ".repeat(detail_indent);
+            let _ = writeln!(out, "{pad}{} {exit_code}", color::dim("exit:"));
+            let _ = writeln!(out, "{pad}{} {command}", color::dim("command:"));
+            if !stderr.is_empty() {
+                for line in stderr.lines() {
+                    let _ = writeln!(out, "{pad}{} {line}", color::dim("stderr:"));
+                }
+            }
+        }
+        CheckStatus::Manual => {
+            let _ = writeln!(
+                out,
+                "  {} {}{}",
+                color::yellow(&format!("? {padded_id}")),
+                r.display_path,
+                tag_suffix,
+            );
+        }
+    }
+    let _ = out.flush();
+}
+
 /// Run the check subcommand.
 pub fn run(opts: &CheckOptions) -> Result<bool> {
-    // Validate tag expression up front so malformed expressions fail early
-    // instead of silently producing empty output.
     if let Some(ref expr) = opts.tags_expr {
         validate_tag_expr(expr).map_err(|e| anyhow::anyhow!("invalid tag expression: {e}"))?;
+    }
+    if let Some(ref expr) = opts.search_expr {
+        validate_tag_expr(expr).map_err(|e| anyhow::anyhow!("invalid search expression: {e}"))?;
     }
 
     let root = project::find_project_root()?;
@@ -232,6 +285,13 @@ pub fn run(opts: &CheckOptions) -> Result<bool> {
     let mut results: Vec<CheckResult> = Vec::new();
     let mut fact_idx = 0;
 
+    // Pre-compute ID width for consistent alignment.
+    let id_width = assigned_ids.iter().map(|id| id.len()).max().unwrap_or(3);
+    let detail_indent = id_width + 6;
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
     for sheet in &sheets {
         for (section_path, fact) in sheet.all_facts() {
             let id = assigned_ids[fact_idx].clone();
@@ -243,11 +303,34 @@ pub fn run(opts: &CheckOptions) -> Result<bool> {
                 continue;
             }
 
+            if let Some(depth) = opts.depth {
+                if section_path.len() > depth {
+                    continue;
+                }
+            }
+
+            if let Some(ref expr) = opts.search_expr {
+                let haystack = build_search_haystack(&section_path, &fact.label, &fact.tags);
+                if !matches_search_expr(expr, &haystack) {
+                    continue;
+                }
+            }
+
             let display_path = format_display_path(sheet, &section_path, &fact.label);
+
+            let is_tty = color::enabled();
 
             let status = match &fact.command {
                 Some(command) => {
+                    if is_tty {
+                        let padded_id = format!("{:width$}", id, width = id_width);
+                        let _ = write!(out, "  {}", color::dim(&format!("… {padded_id}")));
+                        let _ = out.flush();
+                    }
                     let (exit_code, stderr) = run_command(command, &root, timeout);
+                    if is_tty {
+                        let _ = write!(out, "\r\x1b[2K");
+                    }
                     if exit_code == 0 {
                         CheckStatus::Passed {
                             command: command.clone(),
@@ -263,111 +346,64 @@ pub fn run(opts: &CheckOptions) -> Result<bool> {
                 None => CheckStatus::Manual,
             };
 
-            results.push(CheckResult {
+            let result = CheckResult {
                 id,
                 display_path,
                 tags: fact.tags.clone(),
                 status,
-            });
+            };
+
+            print_result(&mut out, &result, id_width, detail_indent);
+            results.push(result);
         }
     }
 
-    let passed: Vec<&CheckResult> = results
+    drop(out);
+
+    let passed = results
         .iter()
         .filter(|r| matches!(r.status, CheckStatus::Passed { .. }))
-        .collect();
-    let failed: Vec<&CheckResult> = results
+        .count();
+    let failed = results
         .iter()
         .filter(|r| matches!(r.status, CheckStatus::Failed { .. }))
-        .collect();
-    let manual: Vec<&CheckResult> = results
+        .count();
+    let manual = results
         .iter()
         .filter(|r| matches!(r.status, CheckStatus::Manual))
-        .collect();
+        .count();
 
-    let has_failures = !failed.is_empty();
+    let has_failures = failed > 0;
 
-    let id_width = results.iter().map(|r| r.id.len()).max().unwrap_or(3);
-    // "  " + marker + " " + padded_id + " " = id_width + 6
-    let detail_indent = id_width + 6;
-
-    if !passed.is_empty() {
-        println!("{}", color::bold(&color::green("passed")));
-        for r in &passed {
-            if let CheckStatus::Passed { command } = &r.status {
-                let padded_id = format!("{:width$}", r.id, width = id_width);
-                let tag_suffix = format_tag_suffix(&r.tags);
-                println!(
-                    "  {} {} {}{}",
-                    color::green(&format!("✓ {padded_id}")),
-                    r.display_path,
-                    color::dim(&format!("({command})")),
-                    tag_suffix,
-                );
-            }
-        }
-        println!();
-    }
-
-    if !failed.is_empty() {
-        println!("{}", color::bold(&color::red("failed")));
-        for r in &failed {
-            if let CheckStatus::Failed {
-                command,
-                exit_code,
-                stderr,
-            } = &r.status
-            {
-                let padded_id = format!("{:width$}", r.id, width = id_width);
-                let tag_suffix = format_tag_suffix(&r.tags);
-                println!(
-                    "  {} {}{}",
-                    color::red(&format!("✗ {padded_id}")),
-                    r.display_path,
-                    tag_suffix,
-                );
-                let pad = " ".repeat(detail_indent);
-                println!("{pad}{} {exit_code}", color::dim("exit:"),);
-                println!("{pad}{} {command}", color::dim("command:"),);
-                if !stderr.is_empty() {
-                    for line in stderr.lines() {
-                        println!("{pad}{} {line}", color::dim("stderr:"),);
-                    }
-                }
-            }
-        }
-        println!();
-    }
-
-    if !manual.is_empty() {
-        println!("{}", color::bold(&color::yellow("manual")));
-        for r in &manual {
-            let padded_id = format!("{:width$}", r.id, width = id_width);
-            let tag_suffix = format_tag_suffix(&r.tags);
-            println!(
-                "  {} {}{}",
-                color::yellow(&format!("? {padded_id}")),
-                r.display_path,
-                tag_suffix,
-            );
-        }
-        println!();
-    }
-
+    println!();
     let summary = format!(
         "{}, {}, {}",
-        color::green(&format!("{} passed", passed.len())),
-        color::red(&format!("{} failed", failed.len())),
-        color::yellow(&format!("{} manual", manual.len())),
+        color::green(&format!("{passed} passed")),
+        color::red(&format!("{failed} failed")),
+        color::yellow(&format!("{manual} manual")),
     );
     println!("{}", color::bold(&summary));
 
-    println!(
-        "{}",
-        color::dim("? = no command — verified manually by the agent"),
-    );
+    if manual > 0 {
+        let noun = if manual == 1 { "fact has" } else { "facts have" };
+        println!(
+            "{}",
+            color::yellow(&format!(
+                "{manual} {noun} no command — verify each against the code and state PASS or FAIL with a one-line reason."
+            )),
+        );
+    }
 
     Ok(!has_failures)
+}
+
+fn build_search_haystack(section_path: &[String], label: &str, tags: &[String]) -> String {
+    let mut parts: Vec<&str> = section_path.iter().map(|s| s.as_str()).collect();
+    parts.push(label);
+    for tag in tags {
+        parts.push(tag.as_str());
+    }
+    parts.join(" ")
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ const DISCOVER_SKILL: &str = include_str!("../skills/facts-discover/SKILL.md");
 const IMPLEMENT_SKILL: &str = include_str!("../skills/facts-implement/SKILL.md");
 const REFINE_SKILL: &str = include_str!("../skills/facts-refine/SKILL.md");
 
-const SKILLS: &[(&str, &str)] = &[
+pub(crate) const SKILLS: &[(&str, &str)] = &[
     ("facts", FACTS_SKILL),
     ("facts-discover", DISCOVER_SKILL),
     ("facts-implement", IMPLEMENT_SKILL),
@@ -33,19 +33,28 @@ const AGENT_DOCS_SECTION: &str = "\
 <!-- facts:start -->
 ## Fact-driven development
 
-This project uses [facts](https://github.com/av/facts) — a CLI that manages `.facts` files containing atomic, validatable truth statements about the project. The fact sheet is both the spec and the documentation.
+This project uses [facts](https://github.com/av/facts) for specification and documentation. All work flows through the fact sheet — it is the source of truth.
 
-**Start of work:** Run `facts list` to read the project spec. Run `facts check` to see what holds and what doesn't. Use this to orient before writing code.
+**Every change starts with a fact.** Facts are the spec — they define what \"done\" means. Code that isn't described by a fact is unverifiable and will be treated as incorrect. The skill `facts skills show facts` has the full format spec and command reference.
 
-**During work:** Keep the fact sheet in sync. When you add a feature, add corresponding facts. When you fix a bug, verify related facts still hold. When you remove code, remove obsolete facts. Run `facts check` after significant changes.
+1. `facts list` — read the current spec to orient. Fact sheets can be large — use filters to focus: `--section \"cli/init\"`, `--tags \"draft\"`, `--file api.facts`, `--manual`. Read only the section relevant to your task, not the entire sheet.
+2. `facts add` — write facts describing what should be true when done. Each fact is a testable claim. You are not ready to write code until this step is complete.
+3. Implement the code to make those facts true
+4. `facts check --tags \"<tag>\"` or `facts get <id>` — verify your changes. Never run bare `facts check` unless asked.
+5. `facts edit <id> --add-tag implemented` — mark verified facts done
 
-**Three distinct workflows — do not confuse them:**
-- **Define** — write new facts as specification. The user says \"add facts\", \"define the spec\", \"work on facts\". Do NOT remove unimplemented facts — they represent intended work.
-- **Refine** (`facts-refine` skill) — collaboratively sharpen vague facts, resolve contradictions, fill gaps. When the user says \"refine\", \"clarify\", or \"review the facts\".
-- **Discover** (`facts-discover` skill) — scan the codebase and sync the fact sheet to match reality. Only when the user explicitly asks to discover, audit, or sync.
-- **Implement** (`facts-implement` skill) — make unimplemented facts true in code. Only when the user explicitly asks to implement.
+Step 4 only works if step 2 happened. If you skipped step 2, go back now — you cannot verify work that has no fact.
 
-When in doubt about which workflow the user wants, ask.
+**Manual facts (`?` in check output):** these have no command, so you verify them by reading the relevant code. For each `?` fact: read what it claims, check the code, report PASS or FAIL with a one-line reason. Reporting \"N manual\" without verifying each one is not acceptable.
+
+**Lifecycle:** `@draft` → `@spec` → `@implemented`
+
+**Domain:** the `## domain` section in `.facts` defines the project's entities and relations — read it first to learn the vocabulary.
+
+**Skills** (invoke via `facts skills show <name>`):
+- `facts-refine` — sharpen `@draft` facts into `@spec` with the user
+- `facts-discover` — scan the codebase and sync facts to reality (only when explicitly asked)
+- `facts-implement` — implement `@spec` facts in code, verify, tag `@implemented`
 <!-- facts:end -->";
 
 const AGENT_MD_FILES: &[&str] = &["CLAUDE.md", "AGENTS.md"];
@@ -112,7 +121,7 @@ fn run_in(root: &Path) -> Result<()> {
 // Skill installation
 // ---------------------------------------------------------------------------
 
-fn install_skill(root: &Path, name: &str, content: &str) -> Result<()> {
+pub(crate) fn install_skill(root: &Path, name: &str, content: &str) -> Result<()> {
     let skill_dir = root.join(".agents").join("skills").join(name);
     let skill_path = skill_dir.join("SKILL.md");
 
@@ -137,7 +146,7 @@ fn install_skill(root: &Path, name: &str, content: &str) -> Result<()> {
 // Claude symlinks
 // ---------------------------------------------------------------------------
 
-fn is_claude_available(root: &Path) -> bool {
+pub(crate) fn is_claude_available(root: &Path) -> bool {
     if root.join(".claude").exists() {
         return true;
     }
@@ -156,7 +165,7 @@ fn is_claude_available(root: &Path) -> bool {
 }
 
 #[cfg(unix)]
-fn link_skill_for_claude(root: &Path, name: &str) -> Result<()> {
+pub(crate) fn link_skill_for_claude(root: &Path, name: &str) -> Result<()> {
     let link_dir = root.join(".claude").join("skills");
     let link_path = link_dir.join(name);
     // Relative from .claude/skills/ up to project root, then into .agents/skills/<name>
@@ -186,7 +195,7 @@ fn link_skill_for_claude(root: &Path, name: &str) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn link_skill_for_claude(_root: &Path, name: &str) -> Result<()> {
+pub(crate) fn link_skill_for_claude(_root: &Path, name: &str) -> Result<()> {
     println!("  skip  .claude/skills/{name} (symlinks not supported on this platform)");
     Ok(())
 }
@@ -205,7 +214,20 @@ fn install_agent_docs(root: &Path) -> Result<()> {
         }
         let content = std::fs::read_to_string(&path)?;
         if content.contains(SECTION_START) {
-            println!("  skip  {name} (facts section exists)");
+            let start = content.find(SECTION_START).unwrap();
+            let end_marker = content[start..].find(SECTION_END).unwrap();
+            let end = start + end_marker + SECTION_END.len();
+            let existing_section = &content[start..end];
+            if existing_section == AGENT_DOCS_SECTION {
+                println!("  skip  {name} (facts section up to date)");
+            } else {
+                let mut new_content = String::new();
+                new_content.push_str(&content[..start]);
+                new_content.push_str(AGENT_DOCS_SECTION);
+                new_content.push_str(&content[end..]);
+                std::fs::write(&path, new_content)?;
+                println!("  update  {name} (facts section updated)");
+            }
         } else {
             let mut new_content = content.clone();
             if !new_content.ends_with('\n') && !new_content.is_empty() {
@@ -1982,6 +2004,20 @@ mod tests {
         install_agent_docs(dir.path()).unwrap();
         let second = std::fs::read_to_string(dir.path().join("CLAUDE.md")).unwrap();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_agent_docs_replaces_stale_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let stale =
+            "# Project\n\n<!-- facts:start -->\nold content\n<!-- facts:end -->\n\n## Other\n";
+        std::fs::write(dir.path().join("CLAUDE.md"), stale).unwrap();
+        install_agent_docs(dir.path()).unwrap();
+        let result = std::fs::read_to_string(dir.path().join("CLAUDE.md")).unwrap();
+        assert!(result.contains(AGENT_DOCS_SECTION));
+        assert!(!result.contains("old content"));
+        assert!(result.contains("# Project"));
+        assert!(result.contains("## Other"));
     }
 
     #[test]

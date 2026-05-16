@@ -3774,3 +3774,350 @@ fn edit_batch_rejects_new_id_with_multiple_ids() {
             "--new-id cannot be used with multiple IDs",
         ));
 }
+
+// ===========================================================================
+// list --search
+// ===========================================================================
+
+#[test]
+fn list_search_matches_label() {
+    let dir = project("# cli\n\n- init scaffolds\n- check runs commands\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "scaffolds"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("init scaffolds"))
+        .stdout(predicate::str::contains("check runs commands").not());
+}
+
+#[test]
+fn list_search_matches_section() {
+    let dir = project("# api\n\n- endpoint works\n\n# cli\n\n- command works\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "api"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("endpoint works"))
+        .stdout(predicate::str::contains("command works").not());
+}
+
+#[test]
+fn list_search_matches_tags() {
+    let dir = project("# project\n\n- tagged fact  @mvp\n- untagged fact\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "mvp"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tagged fact"))
+        .stdout(predicate::str::contains("untagged fact").not());
+}
+
+#[test]
+fn list_search_case_insensitive() {
+    let dir = project("# CLI\n\n- Init Scaffolds\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "init"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Init Scaffolds"));
+}
+
+#[test]
+fn list_search_boolean_and() {
+    let dir = project("# cli\n\n- init scaffolds\n- check runs\n\n# api\n\n- init endpoint\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "init and cli"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("init scaffolds"))
+        .stdout(predicate::str::contains("init endpoint").not());
+}
+
+#[test]
+fn list_search_boolean_or() {
+    let dir = project("# project\n\n- alpha\n- beta\n- gamma\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "alpha or beta"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alpha"))
+        .stdout(predicate::str::contains("beta"))
+        .stdout(predicate::str::contains("gamma").not());
+}
+
+#[test]
+fn list_search_boolean_not() {
+    let dir = project("# project\n\n- alpha\n- beta\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "not beta"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alpha"))
+        .stdout(predicate::str::contains("beta").not());
+}
+
+#[test]
+fn list_search_boolean_parens() {
+    let dir = project("# cli\n\n- init fast\n- check fast\n\n# api\n\n- init slow\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "(init or check) and cli"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("init fast"))
+        .stdout(predicate::str::contains("check fast"))
+        .stdout(predicate::str::contains("init slow").not());
+}
+
+#[test]
+fn list_search_composes_with_tags() {
+    let dir = project("# cli\n\n- init works  @mvp\n- init also  @blocked\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "init", "--tags", "mvp"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("init works"))
+        .stdout(predicate::str::contains("init also").not());
+}
+
+#[test]
+fn list_search_composes_with_section() {
+    let dir = project("# cli\n\n- init fact\n\n# api\n\n- init fact\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "init", "--section", "api"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("init fact").count(1));
+}
+
+#[test]
+fn list_search_invalid_expression_errors() {
+    let dir = project("# project\n\n- fact\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "(unclosed"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid search expression"));
+}
+
+// ===========================================================================
+// list --depth
+// ===========================================================================
+
+#[test]
+fn list_depth_zero_shows_preamble_only() {
+    let dir = project("- top level\n\n# section\n\n- nested\n");
+    facts_cmd(&dir)
+        .args(["list", "--depth", "0"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("top level"))
+        .stdout(predicate::str::contains("nested").not());
+}
+
+#[test]
+fn list_depth_one_shows_first_level() {
+    let dir = project("# a\n\n- level one\n\n## b\n\n- level two\n");
+    facts_cmd(&dir)
+        .args(["list", "--depth", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("level one"))
+        .stdout(predicate::str::contains("level two").not());
+}
+
+#[test]
+fn list_depth_composes_with_search() {
+    let dir = project("# cli\n\n- init\n\n## sub\n\n- init deep\n");
+    facts_cmd(&dir)
+        .args(["list", "--search", "init", "--depth", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("init"))
+        .stdout(predicate::str::contains("init deep").not());
+}
+
+// ===========================================================================
+// check --search / --depth
+// ===========================================================================
+
+#[test]
+fn check_search_filters_output() {
+    let dir = project(
+        "# project\n\n\
+         - label: alpha\n  command: \"true\"\n\
+         - label: beta\n  command: \"true\"\n",
+    );
+    facts_cmd(&dir)
+        .args(["check", "--search", "alpha"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alpha"))
+        .stdout(predicate::str::contains("beta").not());
+}
+
+#[test]
+fn check_depth_filters_output() {
+    let dir = project(
+        "# a\n\n\
+         - label: shallow\n  command: \"true\"\n\n\
+         ## b\n\n\
+         - label: deep\n  command: \"true\"\n",
+    );
+    facts_cmd(&dir)
+        .args(["check", "--depth", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("shallow"))
+        .stdout(predicate::str::contains("deep").not());
+}
+
+// ===========================================================================
+// list --light
+// ===========================================================================
+
+#[test]
+fn list_light_shows_markdown_headings() {
+    let dir = project(
+        "# top\n\n\
+         - top fact\n\n\
+         ## nested\n\n\
+         - nested fact\n",
+    );
+    let output = facts_cmd(&dir).args(["list", "--light"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("# top"),
+        "should show top heading: {stdout}"
+    );
+    assert!(
+        stdout.contains("## nested"),
+        "should show nested heading: {stdout}"
+    );
+    assert!(
+        stdout.contains("top fact"),
+        "should show top fact: {stdout}"
+    );
+    assert!(
+        stdout.contains("nested fact"),
+        "should show nested fact: {stdout}"
+    );
+}
+
+#[test]
+fn list_light_shows_ids_in_parens() {
+    let dir = project("- a plain fact\n");
+    let output = facts_cmd(&dir).args(["list", "--light"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Light mode shows the ID in gray parentheses after the bullet
+    assert!(
+        stdout.starts_with("- ("),
+        "light mode should start with bullet and paren: {stdout}"
+    );
+    assert!(
+        stdout.contains("a plain fact"),
+        "light mode should contain the label: {stdout}"
+    );
+}
+
+#[test]
+fn list_light_hides_commands() {
+    let dir = project("- label: cmd fact\n  command: echo hello\n");
+    let output = facts_cmd(&dir).args(["list", "--light"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("cmd fact"),
+        "should show fact label: {stdout}"
+    );
+    assert!(
+        !stdout.contains("command:"),
+        "light mode should not show commands: {stdout}"
+    );
+}
+
+#[test]
+fn list_light_shows_tags() {
+    let dir = project("- tagged fact @mvp @core\n");
+    let output = facts_cmd(&dir).args(["list", "--light"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("tagged fact"),
+        "should show fact label: {stdout}"
+    );
+    assert!(stdout.contains("@mvp"), "should show @mvp tag: {stdout}");
+    assert!(stdout.contains("@core"), "should show @core tag: {stdout}");
+}
+
+#[test]
+fn list_light_composes_with_filters() {
+    let dir = project(
+        "# alpha\n\n\
+         - alpha fact\n\n\
+         # beta\n\n\
+         - beta fact\n",
+    );
+    let output = facts_cmd(&dir)
+        .args(["list", "--light", "--section", "alpha"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("# alpha"),
+        "should show alpha heading: {stdout}"
+    );
+    assert!(
+        stdout.contains("alpha fact"),
+        "should show alpha fact: {stdout}"
+    );
+    assert!(
+        !stdout.contains("# beta"),
+        "should not show beta heading: {stdout}"
+    );
+    assert!(
+        !stdout.contains("beta fact"),
+        "should not show beta fact: {stdout}"
+    );
+}
+
+#[test]
+fn list_light_named_file_heading() {
+    let dir = empty_project();
+    fs::write(dir.path().join(".facts"), "- default fact\n").unwrap();
+    fs::write(dir.path().join("extra.facts"), "- extra fact\n").unwrap();
+
+    let output = facts_cmd(&dir).args(["list", "--light"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Default .facts should have no file heading; named files should
+    assert!(
+        !stdout.lines().any(|l| l == ".facts"),
+        "default file should not have heading: {stdout}"
+    );
+    assert!(
+        stdout.lines().any(|l| l == "extra.facts"),
+        "named file should have heading: {stdout}"
+    );
+    assert!(
+        stdout.contains("default fact"),
+        "should show default fact: {stdout}"
+    );
+    assert!(
+        stdout.contains("extra fact"),
+        "should show extra fact: {stdout}"
+    );
+}
+
+#[test]
+fn list_light_preamble_only() {
+    let dir = project("- preamble fact\n\n# section\n\n- section fact\n");
+    let output = facts_cmd(&dir).args(["list", "--light"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Preamble fact should appear before any headings
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(
+        lines.first().unwrap().starts_with("- ("),
+        "preamble should come first with bullet+ID: {lines:?}"
+    );
+    assert!(
+        lines.first().unwrap().contains("preamble fact"),
+        "preamble should contain label: {lines:?}"
+    );
+}

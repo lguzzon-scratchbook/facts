@@ -15,15 +15,30 @@ mod move_fact;
 mod parser;
 mod project;
 mod remove;
+mod skills;
 mod tags;
 mod uninit;
+mod update;
 mod writer;
 
 use clap::{Parser, Subcommand};
 
 /// A CLI for fact-driven development with coding agents.
 #[derive(Parser)]
-#[command(name = "facts", version, about)]
+#[command(
+    name = "facts",
+    version,
+    about,
+    before_help = "\
+Start here (for AI agents):\n  \
+  facts skills show facts\n\n  \
+  Skills ship with the CLI and include the full workflow, format spec,\n  \
+  and command reference. Read the skill before using the CLI.\n\n  \
+  skills [list]               List available skills\n  \
+  skills show <name>          Read a skill (facts, facts-discover, ...)\n  \
+  skills update               Install/update skills in the project\
+"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -52,6 +67,18 @@ enum Command {
         /// Boolean tag filter expression (e.g. "mvp and not blocked").
         #[arg(long)]
         tags: Option<String>,
+
+        /// Boolean search expression matched against section, label, and tags (e.g. "update and cli").
+        #[arg(long)]
+        search: Option<String>,
+
+        /// Limit section nesting depth (0 = top-level only).
+        #[arg(long)]
+        depth: Option<usize>,
+
+        /// Show markdown-like output with headings, bullets, and dimmed IDs.
+        #[arg(long)]
+        light: bool,
     },
 
     /// Run all command-facts, report pass/fail/manual.
@@ -59,6 +86,14 @@ enum Command {
         /// Boolean tag filter expression (e.g. "mvp and not blocked").
         #[arg(long)]
         tags: Option<String>,
+
+        /// Boolean search expression matched against section, label, and tags (e.g. "update and cli").
+        #[arg(long)]
+        search: Option<String>,
+
+        /// Limit section nesting depth (0 = top-level only).
+        #[arg(long)]
+        depth: Option<usize>,
 
         /// Per-command timeout in seconds.
         #[arg(long)]
@@ -167,6 +202,28 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+
+    /// Update facts to the latest version.
+    Update,
+
+    /// Manage agent skills. Use `show` to read a skill without installing.
+    Skills {
+        #[command(subcommand)]
+        action: Option<SkillsCommand>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillsCommand {
+    /// Show available skills with descriptions.
+    List,
+    /// Print the full content of a skill.
+    Show {
+        /// Skill name (e.g. "facts", "facts-discover").
+        name: String,
+    },
+    /// Install or update skills in the current project.
+    Update,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -179,6 +236,9 @@ fn main() -> anyhow::Result<()> {
             has_command,
             manual,
             tags,
+            search,
+            depth,
+            light,
         }) => {
             let opts = list::ListOptions {
                 file_filter: file,
@@ -186,12 +246,22 @@ fn main() -> anyhow::Result<()> {
                 has_command,
                 manual,
                 tags_expr: tags,
+                search_expr: search,
+                depth,
+                light,
             };
             list::run(&opts)?;
         }
-        Some(Command::Check { tags, timeout }) => {
+        Some(Command::Check {
+            tags,
+            search,
+            depth,
+            timeout,
+        }) => {
             let opts = check::CheckOptions {
                 tags_expr: tags,
+                search_expr: search,
+                depth,
                 timeout,
             };
             let all_passed = check::run(&opts)?;
@@ -284,6 +354,17 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Uninit { force }) => {
             uninit::run(force)?;
         }
+        Some(Command::Update) => {
+            update::run()?;
+        }
+        Some(Command::Skills { action }) => {
+            let action = match action {
+                Some(SkillsCommand::Show { name }) => skills::SkillsAction::Show { name },
+                Some(SkillsCommand::Update) => skills::SkillsAction::Update,
+                Some(SkillsCommand::List) | None => skills::SkillsAction::List,
+            };
+            skills::run(&action)?;
+        }
         None => {
             let opts = list::ListOptions {
                 file_filter: None,
@@ -291,6 +372,9 @@ fn main() -> anyhow::Result<()> {
                 has_command: false,
                 manual: false,
                 tags_expr: None,
+                search_expr: None,
+                depth: None,
+                light: false,
             };
             list::run(&opts)?;
         }
