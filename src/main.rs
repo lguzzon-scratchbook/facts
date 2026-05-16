@@ -1,25 +1,29 @@
-mod add;
-mod check;
-mod color;
-mod edit;
-mod fmt;
-mod get;
-mod id;
-mod init;
-mod lint;
-mod list;
-mod locate;
-mod lock;
-mod model;
-mod move_fact;
-mod parser;
-mod project;
-mod remove;
-mod skills;
-mod tags;
-mod uninit;
-mod update;
-mod writer;
+#[cfg(feature = "dhat")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
+pub mod add;
+pub mod check;
+pub mod color;
+pub mod edit;
+pub mod fmt;
+pub mod get;
+pub mod id;
+pub mod init;
+pub mod lint;
+pub mod list;
+pub mod locate;
+pub mod lock;
+pub mod model;
+pub mod move_fact;
+pub mod parser;
+pub mod project;
+pub mod remove;
+pub mod skills;
+pub mod tags;
+pub mod uninit;
+pub mod update;
+pub mod writer;
 
 use clap::{Parser, Subcommand};
 
@@ -227,6 +231,9 @@ enum SkillsCommand {
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(feature = "dhat")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let cli = Cli::parse();
 
     match cli.command {
